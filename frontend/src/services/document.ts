@@ -4,12 +4,11 @@ export const documentService = {
   upload: (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    return api.post('/documents/upload', form, {
+    return api.post('/api/v1/documents/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
   },
-  list: () => api.get('/documents/list'),
-  delete: (filename: string) => api.delete(`/documents/delete/${filename}`),
-  chat: (message: string) => api.post('/documents/chat', { message }),
-  summary: () => api.post('/documents/summary'),
+  list: () => api.get('/api/v1/documents/'),
+  get: (id: number) => api.get(`/api/v1/documents/${id}`),
+  delete: (id: number) => api.delete(`/api/v1/documents/${id}`),
 }
