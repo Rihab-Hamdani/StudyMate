@@ -1,13 +1,13 @@
-import { ReactNode } from 'react'
+import type { ReactNode, ButtonHTMLAttributes } from 'react'
 
-interface ButtonProps {
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode
   onClick?: () => void
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger'
   size?: 'sm' | 'md' | 'lg'
   disabled?: boolean
   className?: string
-  type?: 'button' | 'submit'
+  type?: 'button' | 'submit' | 'reset'
 }
 
 const variants = {
@@ -24,8 +24,14 @@ const sizes = {
 }
 
 export default function Button({
-  children, onClick, variant = 'primary',
-  size = 'md', disabled, className = '', type = 'button'
+  children,
+  onClick,
+  variant = 'primary',
+  size = 'md',
+  disabled,
+  className = '',
+  type = 'button',
+  ...props
 }: ButtonProps) {
   return (
     <button
@@ -38,6 +44,7 @@ export default function Button({
         disabled:opacity-40 disabled:cursor-not-allowed
         flex items-center gap-2 ${className}
       `}
+      {...props}
     >
       {children}
     </button>

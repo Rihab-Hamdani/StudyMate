@@ -19,16 +19,19 @@ export default function Documents() {
   const [loading, setLoading] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { fetchDocs() }, [])
+  useEffect(() => {
+    fetchDocs()
+  }, [])
 
   const fetchDocs = async () => {
     try {
       const res = await documentService.list()
-      // API returns { documents: [...], total: n }
-      const data = res.data
+      // Cast to any to prevent TypeScript from red-lining 'data.documents'
+      const data: any = res.data
+
       if (Array.isArray(data)) {
         setDocs(data)
-      } else if (data.documents && Array.isArray(data.documents)) {
+      } else if (data && Array.isArray(data.documents)) {
         setDocs(data.documents)
       } else {
         setDocs([])
@@ -36,8 +39,9 @@ export default function Documents() {
     } catch (err) {
       console.error('Failed to fetch documents', err)
       setDocs([])
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -50,9 +54,10 @@ export default function Documents() {
     } catch (err) {
       console.error('Upload error:', err)
       alert('Upload failed. Make sure backend is running.')
+    } finally {
+      setUploading(false)
+      if (inputRef.current) inputRef.current.value = ''
     }
-    setUploading(false)
-    if (inputRef.current) inputRef.current.value = ''
   }
 
   const handleDelete = async (id: number, name: string) => {
@@ -131,7 +136,7 @@ export default function Documents() {
                   </span>
                   <span className="text-gray-500 text-xs flex items-center gap-1">
                     <Calendar size={10} />
-                    {new Date(doc.created_at).toLocaleDateString()}
+                    {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'N/A'}
                   </span>
                 </div>
               </div>

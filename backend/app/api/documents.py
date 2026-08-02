@@ -1,28 +1,30 @@
 import os
 import uuid
+from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from sqlalchemy.orm import Session
-from typing import List, Optional
 import fitz
-# from google import genai
-
-
+from groq import Groq
 
 from app.database.session import get_db
 from app.models.document import Document
 from app.schemas.document import DocumentResponse, DocumentListResponse
 from app.core.config import settings
 
-from groq import Groq
+from pydantic import BaseModel
+from typing import List, Optional
+
+class DocumentSummarizeRequest(BaseModel):
+    doc_ids: Optional[List[int]] = None
+    summary_style: str = "bullet_points"
 
 router = APIRouter(prefix="/api/v1/documents", tags=["Documents"])
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Initialize Gemini ONCE at module level
-#gemini_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 groq_client = Groq(api_key=settings.GROQ_API_KEY)
+
 
 def extract_text_from_pdf(file_path: str) -> tuple[str, int]:
     try:
@@ -37,7 +39,7 @@ def extract_text_from_pdf(file_path: str) -> tuple[str, int]:
         return "", 0
 
 
-# ─── UPLOAD ──────────────────────────────────────────────────────────────────
+# ─── 1. UPLOAD ───────────────────────────────────────────────────────────────
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
@@ -73,54 +75,32 @@ async def upload_document(
     return document
 
 
-# ─── LIST ────────────────────────────────────────────────────────────────────
+# ─── 2. LIST ─────────────────────────────────────────────────────────────────
 @router.get("/", response_model=DocumentListResponse)
 def list_documents(db: Session = Depends(get_db)):
     docs = db.query(Document).order_by(Document.created_at.desc()).all()
     return {"documents": docs, "total": len(docs)}
 
 
-# ─── SUMMARIZE (must be before /{document_id}) ───────────────────────────────
+# ─── 3. SUMMARIZE (MUST be declared BEFORE /{document_id}) ───────────────────
 @router.post("/summarize")
 async def summarize_documents(
-    doc_ids: Optional[str] = Form(None),
-    files: Optional[List[UploadFile]] = File(None),
-    summary_style: str = Form("bullet_points"),
+    payload: DocumentSummarizeRequest,
     db: Session = Depends(get_db)
 ):
-    """
-    Summarize documents from:
-    1. Existing documents selected from library (doc_ids as comma-separated string)
-    2. New PDFs uploaded directly
-    """
     combined_text = ""
 
-    # Source 1: existing documents from DB
-    if doc_ids:
-        ids = [int(i) for i in doc_ids.split(",") if i.strip().isdigit()]
-        docs = db.query(Document).filter(Document.id.in_(ids)).all()
+    # Source: existing documents from DB
+    if payload.doc_ids:
+        docs = db.query(Document).filter(Document.id.in_(payload.doc_ids)).all()
         for doc in docs:
             if doc.extracted_text:
                 combined_text += f"\n\n=== {doc.original_name} ===\n{doc.extracted_text}"
 
-    # Source 2: newly uploaded files
-    if files:
-        for file in files:
-            if file and file.filename and file.filename.lower().endswith(".pdf"):
-                temp_path = os.path.join(UPLOAD_DIR, f"temp_{uuid.uuid4().hex[:6]}_{file.filename}")
-                content = await file.read()
-                with open(temp_path, "wb") as f:
-                    f.write(content)
-                text, _ = extract_text_from_pdf(temp_path)
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-                if text:
-                    combined_text += f"\n\n=== {file.filename} ===\n{text}"
-
     if not combined_text.strip():
         raise HTTPException(
             status_code=400,
-            detail="No readable text found. Select documents or upload a PDF."
+            detail="No readable text found in selected documents. Make sure the selected document contains text."
         )
 
     style_prompts = {
@@ -129,8 +109,10 @@ async def summarize_documents(
         "key_takeaways": "Extract key definitions, important formulas, and main concepts for exam revision."
     }
 
+    style = payload.summary_style or "bullet_points"
+
     prompt = f"""You are an expert study assistant helping a student understand their documents.
-{style_prompts.get(summary_style, style_prompts['bullet_points'])}
+{style_prompts.get(style, style_prompts['bullet_points'])}
 
 Format your response clearly with:
 📌 Main Topic
@@ -158,9 +140,24 @@ Document content:
             max_tokens=2048,
         )
         summary_text = response.choices[0].message.content
-        return {"summary": summary_text, "style": summary_style}
+        return {"summary": summary_text, "style": style}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
 
+# ─── 4. DELETE (Dynamic path at the VERY BOTTOM) ─────────────────────────────
+@router.delete("/{document_id}")
+def delete_document(document_id: int, db: Session = Depends(get_db)):
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
 
-# ─── GET ONE ────────────────────────────────
+    if os.path.exists(doc.file_path):
+        try:
+            os.remove(doc.file_path)
+        except Exception:
+            pass
+
+    db.delete(doc)
+    db.commit()
+
+    return {"message": "Document deleted successfully", "id": document_id}
